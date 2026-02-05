@@ -20,6 +20,7 @@ Build and iterate Infinite CLI as a terminal-first system that generates disposa
 ## Current Command Surface
 - `infinite "<intent>"`
 - `icli <intent>` (alias of `infinite`)
+- Runtime flags: `--agents <n>` / `--<n>`, `--fast`, `--debug`
 - `infinite tools`
 - `infinite tool show <name>`
 - `infinite tool run <name> [args...]`

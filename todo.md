@@ -29,6 +29,7 @@
 - [x] Wire natural-intent flow to generate, promote, and auto-run winning candidate.
 - [x] Add baseline unit tests (`spec` + scoring).
 - [x] Add CLI UX override for parallel agents: `--agents <n>` and shorthand `--<n>` (e.g., `--4`).
+- [x] Add `--fast` and `--debug` runtime presets for quicker or more inspectable generation runs.
 
 ## In Progress
 - [ ] Improve prompts and validation to increase candidate pass rate across varied intents.

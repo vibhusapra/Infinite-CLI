@@ -37,6 +37,8 @@ Examples:
 ```bash
 icli make a tiny tool that prints hello from icli --4
 icli --agents 3 make a tiny tool that summarizes json input
+icli --fast make a tiny tool that prints hello fast
+icli --debug make a tiny tool that prints hello with debug artifacts
 ```
 
 ## API Key and Runtime Config
@@ -58,6 +60,29 @@ Model behavior:
 - Orchestrator tries `INFINITE_CODEX_MODEL` first.
 - If Codex returns `model_not_found`, it retries automatically with `gpt-5-codex`.
 - CLI runtime override: `--agents <n>` (or shorthand `--<n>`, for example `--4`) overrides `INFINITE_CANDIDATE_COUNT`.
+- `--fast`: defaults to 1 candidate and caps generation timeout to 120s (unless you explicitly pass `--agents`).
+- `--debug`: keeps worktrees and prints debug artifact locations.
+
+## Useful Commands
+```bash
+# list all generated tools
+icli tools
+
+# list tools as JSON
+icli tools --json
+
+# inspect one tool (manifest, versions, feedback)
+icli tool show <tool-name>
+
+# run a tool directly
+icli tool run <tool-name>
+
+# pass arguments to a generated tool
+icli tool run <tool-name> -- --arg1 value
+
+# add feedback for future improvement
+icli tool improve <tool-name> --feedback "handle csv edge cases"
+```
 
 ## Notes
 - Network access and OpenAI API usage are expected.

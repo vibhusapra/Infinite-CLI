@@ -16,6 +16,8 @@ type JsonOption = { json?: boolean };
 type ImproveOptions = { feedback: string };
 type RuntimeOptions = {
   agents?: number;
+  fast?: boolean;
+  debug?: boolean;
 };
 
 export function buildProgram(): Command {
@@ -30,6 +32,8 @@ export function buildProgram(): Command {
     .name("infinite")
     .description("Generate, run, and improve disposable CLI tools.")
     .option("-j, --agents <count>", "Parallel candidate agents/worktrees (1-5)", parseInteger)
+    .option("--fast", "Fast mode: defaults to 1 agent and lower generation timeout")
+    .option("--debug", "Debug mode: keep worktrees and print extra diagnostics")
     .showHelpAfterError();
 
   program
@@ -172,8 +176,17 @@ export function buildProgram(): Command {
 
       const repoRoot = await resolveRepoRoot(process.cwd());
       const runtimeOptions = program.opts<RuntimeOptions>();
-      const candidateCount = resolveCandidateCount(config.candidateCount, runtimeOptions.agents);
-      console.log(`[config] Using ${candidateCount} candidate agent(s).`);
+      const runtimeConfig = resolveRuntimeGenerationConfig(
+        {
+          candidateCount: config.candidateCount,
+          codexTimeoutMs: config.codexTimeoutMs,
+          keepWorktrees: config.keepWorktrees
+        },
+        runtimeOptions
+      );
+      console.log(
+        `[config] agents=${runtimeConfig.candidateCount} timeoutMs=${runtimeConfig.codexTimeoutMs} keepWorktrees=${runtimeConfig.keepWorktrees} fast=${runtimeConfig.fast} debug=${runtimeConfig.debug}`
+      );
 
       const generation = await generateToolFromIntent({
         request: {
@@ -183,9 +196,9 @@ export function buildProgram(): Command {
         settings: {
           codexBinary: config.codexBinary,
           codexModel: config.codexModel,
-          candidateCount,
-          codexTimeoutMs: config.codexTimeoutMs,
-          keepWorktrees: config.keepWorktrees
+          candidateCount: runtimeConfig.candidateCount,
+          codexTimeoutMs: runtimeConfig.codexTimeoutMs,
+          keepWorktrees: runtimeConfig.keepWorktrees
         },
         context: {
           paths,
@@ -223,6 +236,9 @@ export function buildProgram(): Command {
         `Selected ${generation.selectedCandidate.candidateId} score=${generation.selectedCandidate.score} (${generation.selectedCandidate.summary}).`
       );
       console.log(`[info] Generation job artifacts: ${generation.jobDir}`);
+      if (runtimeConfig.debug) {
+        console.log(`[debug] Worktrees are kept under: ${paths.worktreesDir}`);
+      }
 
       const runResult = await runPythonTool(generation.codePath, []);
       const runId = createRunId();
@@ -299,4 +315,42 @@ function resolveCandidateCount(configValue: number, overrideValue: number | unde
   }
 
   return overrideValue;
+}
+
+type RuntimeGenerationConfigInput = {
+  candidateCount: number;
+  codexTimeoutMs: number;
+  keepWorktrees: boolean;
+};
+
+type RuntimeGenerationConfig = {
+  candidateCount: number;
+  codexTimeoutMs: number;
+  keepWorktrees: boolean;
+  fast: boolean;
+  debug: boolean;
+};
+
+function resolveRuntimeGenerationConfig(
+  base: RuntimeGenerationConfigInput,
+  options: RuntimeOptions
+): RuntimeGenerationConfig {
+  const fast = Boolean(options.fast);
+  const debug = Boolean(options.debug);
+
+  const candidateCount = resolveCandidateCount(
+    fast ? 1 : base.candidateCount,
+    options.agents
+  );
+
+  const codexTimeoutMs = fast ? Math.min(base.codexTimeoutMs, 120_000) : base.codexTimeoutMs;
+  const keepWorktrees = debug ? true : base.keepWorktrees;
+
+  return {
+    candidateCount,
+    codexTimeoutMs,
+    keepWorktrees,
+    fast,
+    debug
+  };
 }
