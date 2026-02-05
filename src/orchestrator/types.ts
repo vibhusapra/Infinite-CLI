@@ -57,6 +57,7 @@ export interface CandidateEvaluation {
   summary: string;
   elapsedMs: number;
   logs: {
+    codexLastMessagePath: string;
     codexStdoutPath: string;
     codexStderrPath: string;
     compileStdoutPath: string;
@@ -68,6 +69,7 @@ export interface CandidateEvaluation {
 
 export interface GenerationResult {
   jobId: string;
+  jobDir: string;
   toolName: string;
   version: number;
   codePath: string;
@@ -75,6 +77,27 @@ export interface GenerationResult {
   selectedCandidate: CandidateEvaluation;
   allCandidates: CandidateEvaluation[];
 }
+
+export type GenerationProgressPhase =
+  | "job-started"
+  | "candidate-started"
+  | "candidate-codex-running"
+  | "candidate-codex-heartbeat"
+  | "candidate-codex-finished"
+  | "candidate-evaluating"
+  | "candidate-finished"
+  | "candidate-failed"
+  | "selection-complete"
+  | "promotion-complete";
+
+export interface GenerationProgressEvent {
+  phase: GenerationProgressPhase;
+  jobId: string;
+  message: string;
+  candidateId?: string;
+}
+
+export type GenerationProgressReporter = (event: GenerationProgressEvent) => void;
 
 export interface OrchestratorContext {
   paths: RuntimePaths;

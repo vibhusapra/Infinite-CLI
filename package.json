@@ -4,7 +4,8 @@
   "description": "Self-extending terminal CLI that generates disposable tools on demand.",
   "type": "module",
   "bin": {
-    "infinite": "dist/index.js"
+    "infinite": "dist/index.js",
+    "icli": "dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

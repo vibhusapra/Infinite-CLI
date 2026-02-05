@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { buildCodexPrompt, deriveFallbackToolName, normalizeManifest, sanitizeToolName } from "./spec.js";
 import { WorktreeManager } from "./worktree-manager.js";
@@ -7,6 +7,7 @@ import { evaluateCandidate } from "./evaluator.js";
 import type {
   CandidateEvaluation,
   CandidatePaths,
+  GenerationProgressReporter,
   GenerationRequest,
   GenerationResult,
   GenerationSettings,
@@ -19,12 +20,18 @@ interface GenerateToolInput {
   settings: GenerationSettings;
   context: OrchestratorContext;
   registry: Registry;
+  reporter?: GenerationProgressReporter;
 }
 
 export async function generateToolFromIntent(input: GenerateToolInput): Promise<GenerationResult> {
   const jobId = createJobId();
   const jobDir = path.join(input.context.paths.jobsDir, jobId);
   mkdirSync(jobDir, { recursive: true });
+  input.reporter?.({
+    phase: "job-started",
+    jobId,
+    message: `Created generation job ${jobId}`
+  });
 
   const worktreeManager = new WorktreeManager(input.context.repoRoot, input.context.paths.worktreesDir);
 
@@ -37,7 +44,8 @@ export async function generateToolFromIntent(input: GenerateToolInput): Promise<
       request: input.request,
       settings: input.settings,
       context: input.context,
-      worktreeManager
+      worktreeManager,
+      reporter: input.reporter
     });
   });
 
@@ -45,11 +53,14 @@ export async function generateToolFromIntent(input: GenerateToolInput): Promise<
   const selectedCandidate = selectBestCandidate(allCandidates);
 
   if (!selectedCandidate) {
-    const failureSummary = allCandidates
-      .map((candidate) => `${candidate.candidateId}: score=${candidate.score} (${candidate.summary})`)
-      .join("\n");
-    throw new Error(`No valid candidate produced a runnable tool.\n${failureSummary}`);
+    throw new GenerationFailureError(jobId, jobDir, allCandidates);
   }
+
+  input.reporter?.({
+    phase: "selection-complete",
+    jobId,
+    message: `Selected ${selectedCandidate.candidateId} with score=${selectedCandidate.score}`
+  });
 
   const selectedManifest = selectedCandidate.manifest ?? normalizeManifest(null, input.request.intent);
   const toolName = sanitizeToolName(selectedManifest.name || deriveFallbackToolName(input.request.intent));
@@ -95,8 +106,15 @@ export async function generateToolFromIntent(input: GenerateToolInput): Promise<
     "utf8"
   );
 
+  input.reporter?.({
+    phase: "promotion-complete",
+    jobId,
+    message: `Promoted ${toolName} v${nextVersion}`
+  });
+
   return {
     jobId,
+    jobDir,
     toolName,
     version: nextVersion,
     codePath: entrypointAbsolutePath,
@@ -114,6 +132,7 @@ interface RunCandidateInput {
   settings: GenerationSettings;
   context: OrchestratorContext;
   worktreeManager: WorktreeManager;
+  reporter?: GenerationProgressReporter;
 }
 
 async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluation> {
@@ -122,17 +141,41 @@ async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluati
   mkdirSync(paths.outputDir, { recursive: true });
 
   let worktreeHandle: { path: string; remove: () => Promise<void> } | null = null;
+  let heartbeat: NodeJS.Timeout | null = null;
   const start = Date.now();
 
   try {
+    input.reporter?.({
+      phase: "candidate-started",
+      jobId: input.jobId,
+      candidateId,
+      message: `${candidateId}: creating isolated worktree`
+    });
+
     worktreeHandle = await input.worktreeManager.create(input.jobId, candidateId);
     paths.worktreeDir = worktreeHandle.path;
 
     const prompt = buildCodexPrompt({
       intent: input.request.intent,
       clarification: input.request.clarification,
-      outputDir: paths.outputDir,
+      outputDir: path.join(worktreeHandle.path, "_infinite_output"),
       candidateId
+    });
+
+    input.reporter?.({
+      phase: "candidate-codex-running",
+      jobId: input.jobId,
+      candidateId,
+      message: `${candidateId}: running codex exec`
+    });
+
+    heartbeat = startHeartbeat(() => {
+      input.reporter?.({
+        phase: "candidate-codex-heartbeat",
+        jobId: input.jobId,
+        candidateId,
+        message: `${candidateId}: still generating...`
+      });
     });
 
     const codexResult = await runCodexExec({
@@ -140,9 +183,38 @@ async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluati
       codexModel: input.settings.codexModel,
       timeoutMs: input.settings.codexTimeoutMs,
       worktreeDir: worktreeHandle.path,
-      outputDir: paths.outputDir,
+      outputDir: path.join(worktreeHandle.path, "_infinite_output"),
       outputLastMessagePath: paths.codexLastMessagePath,
       prompt
+    });
+    stopHeartbeat(heartbeat);
+    heartbeat = null;
+
+    input.reporter?.({
+      phase: "candidate-codex-finished",
+      jobId: input.jobId,
+      candidateId,
+      message: `${candidateId}: codex finished with exit=${codexResult.process.exitCode}`
+    });
+
+    input.reporter?.({
+      phase: "candidate-evaluating",
+      jobId: input.jobId,
+      candidateId,
+      message: `${candidateId}: collecting generated files and running validation`
+    });
+
+    const artifactSource = syncCandidateArtifacts({
+      outputDir: paths.outputDir,
+      worktreeDir: worktreeHandle.path,
+      jobId: input.jobId,
+      candidateId
+    });
+    input.reporter?.({
+      phase: "candidate-evaluating",
+      jobId: input.jobId,
+      candidateId,
+      message: `${candidateId}: artifacts source=${artifactSource}`
     });
 
     const evaluation = await evaluateCandidate({
@@ -151,6 +223,13 @@ async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluati
       paths,
       codexResult: codexResult.process,
       elapsedMs: Date.now() - start
+    });
+
+    input.reporter?.({
+      phase: "candidate-finished",
+      jobId: input.jobId,
+      candidateId,
+      message: `${candidateId}: score=${evaluation.score} (${evaluation.summary})`
     });
 
     return evaluation;
@@ -162,6 +241,13 @@ async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluati
     writeFileSync(paths.compileStderrPath, "Not executed due to candidate failure", "utf8");
     writeFileSync(paths.smokeStdoutPath, "", "utf8");
     writeFileSync(paths.smokeStderrPath, "Not executed due to candidate failure", "utf8");
+
+    input.reporter?.({
+      phase: "candidate-failed",
+      jobId: input.jobId,
+      candidateId,
+      message: `${candidateId}: crashed before completion`
+    });
 
     return {
       candidateId,
@@ -177,6 +263,7 @@ async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluati
       summary: "candidate-crashed",
       elapsedMs: Date.now() - start,
       logs: {
+        codexLastMessagePath: paths.codexLastMessagePath,
         codexStdoutPath: paths.codexStdoutPath,
         codexStderrPath: paths.codexStderrPath,
         compileStdoutPath: paths.compileStdoutPath,
@@ -186,6 +273,10 @@ async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluati
       }
     };
   } finally {
+    if (heartbeat) {
+      stopHeartbeat(heartbeat);
+    }
+
     if (worktreeHandle && !input.settings.keepWorktrees) {
       try {
         await worktreeHandle.remove();
@@ -247,4 +338,147 @@ function createJobId(): string {
 
 function toPosixPath(value: string): string {
   return value.split(path.sep).join("/");
+}
+
+export class GenerationFailureError extends Error {
+  constructor(
+    public readonly jobId: string,
+    public readonly jobDir: string,
+    public readonly candidates: CandidateEvaluation[]
+  ) {
+    super(buildFailureMessage(candidates));
+    this.name = "GenerationFailureError";
+  }
+}
+
+function buildFailureMessage(candidates: CandidateEvaluation[]): string {
+  const details = candidates
+    .map((candidate) => `${candidate.candidateId}: score=${candidate.score} (${candidate.summary})`)
+    .join("\n");
+  return `No valid candidate produced a runnable tool.\n${details}`;
+}
+
+function startHeartbeat(onTick: () => void): NodeJS.Timeout {
+  return setInterval(onTick, 5000);
+}
+
+function stopHeartbeat(timer: NodeJS.Timeout): void {
+  clearInterval(timer);
+}
+
+type SyncArtifactsInput = {
+  outputDir: string;
+  worktreeDir: string;
+  jobId: string;
+  candidateId: string;
+};
+
+function syncCandidateArtifacts(input: SyncArtifactsInput): string {
+  mkdirSync(input.outputDir, { recursive: true });
+
+  const requiredFiles = ["tool.py", "manifest.json", "smoke_test.py"];
+
+  const directCandidatePaths = [
+    input.outputDir,
+    path.join(input.worktreeDir, "_infinite_output"),
+    path.join(input.worktreeDir, ".infinite", "jobs", input.jobId, input.candidateId, "output"),
+    path.join(input.worktreeDir, "output")
+  ];
+
+  for (const sourceDir of directCandidatePaths) {
+    if (directoryHasRequiredFiles(sourceDir, requiredFiles)) {
+      copyRequiredFiles(sourceDir, input.outputDir, requiredFiles);
+      return sourceDir;
+    }
+  }
+
+  const scanned = findLikelyArtifactDir(input.worktreeDir, requiredFiles);
+  if (scanned) {
+    copyRequiredFiles(scanned, input.outputDir, requiredFiles);
+    return scanned;
+  }
+
+  return "not-found";
+}
+
+function directoryHasRequiredFiles(directory: string, requiredFiles: string[]): boolean {
+  if (!existsSync(directory)) {
+    return false;
+  }
+
+  return requiredFiles.every((file) => existsSync(path.join(directory, file)));
+}
+
+function copyRequiredFiles(sourceDir: string, destinationDir: string, requiredFiles: string[]): void {
+  mkdirSync(destinationDir, { recursive: true });
+  for (const file of requiredFiles) {
+    cpSync(path.join(sourceDir, file), path.join(destinationDir, file));
+  }
+}
+
+function findLikelyArtifactDir(rootDir: string, requiredFiles: string[]): string | null {
+  const candidates: { dir: string; matched: number }[] = [];
+  walkDirectories(rootDir, 0, 6, (dir) => {
+    let matched = 0;
+    for (const file of requiredFiles) {
+      if (existsSync(path.join(dir, file))) {
+        matched += 1;
+      }
+    }
+    if (matched > 0) {
+      candidates.push({ dir, matched });
+    }
+  });
+
+  candidates.sort((a, b) => b.matched - a.matched);
+  const best = candidates[0];
+  if (!best || best.matched < requiredFiles.length) {
+    return null;
+  }
+
+  return best.dir;
+}
+
+function walkDirectories(
+  rootDir: string,
+  depth: number,
+  maxDepth: number,
+  onDirectory: (dir: string) => void
+): void {
+  if (depth > maxDepth) {
+    return;
+  }
+
+  if (!existsSync(rootDir)) {
+    return;
+  }
+
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(rootDir);
+  } catch {
+    return;
+  }
+
+  onDirectory(rootDir);
+
+  for (const entry of entries) {
+    const fullPath = path.join(rootDir, entry);
+    let stats;
+    try {
+      stats = statSync(fullPath);
+    } catch {
+      continue;
+    }
+
+    if (!stats.isDirectory()) {
+      continue;
+    }
+
+    if (entry === ".git" || entry === "node_modules") {
+      continue;
+    }
+
+    walkDirectories(fullPath, depth + 1, maxDepth, onDirectory);
+  }
 }

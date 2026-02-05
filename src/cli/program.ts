@@ -3,8 +3,9 @@ import path from "node:path";
 import { Command } from "commander";
 import { loadInfiniteConfig } from "../config/env.js";
 import { ensureRuntimePaths, resolveRuntimePaths } from "../config/runtime-paths.js";
-import { generateToolFromIntent } from "../orchestrator/generator.js";
+import { GenerationFailureError, generateToolFromIntent } from "../orchestrator/generator.js";
 import { draftIntent } from "../orchestrator/intent.js";
+import type { GenerationProgressEvent } from "../orchestrator/types.js";
 import { resolveRepoRoot } from "../orchestrator/worktree-manager.js";
 import { Registry } from "../registry/registry.js";
 import { runPythonTool } from "../runtime/python-runner.js";
@@ -13,6 +14,9 @@ import { askOneQuestion } from "./prompt.js";
 
 type JsonOption = { json?: boolean };
 type ImproveOptions = { feedback: string };
+type RuntimeOptions = {
+  agents?: number;
+};
 
 export function buildProgram(): Command {
   const paths = resolveRuntimePaths(process.cwd());
@@ -25,6 +29,7 @@ export function buildProgram(): Command {
   program
     .name("infinite")
     .description("Generate, run, and improve disposable CLI tools.")
+    .option("-j, --agents <count>", "Parallel candidate agents/worktrees (1-5)", parseInteger)
     .showHelpAfterError();
 
   program
@@ -154,6 +159,11 @@ export function buildProgram(): Command {
       let clarificationResponse: string | null = null;
       if (draft.clarificationQuestion) {
         clarificationResponse = await askOneQuestion(draft.clarificationQuestion);
+        if (clarificationResponse) {
+          console.log(`\n[input] Clarification received: "${clarificationResponse}"`);
+        } else {
+          console.log("\n[input] No clarification provided. Continuing with original intent.");
+        }
       }
 
       if (!config.openAIApiKey) {
@@ -161,6 +171,10 @@ export function buildProgram(): Command {
       }
 
       const repoRoot = await resolveRepoRoot(process.cwd());
+      const runtimeOptions = program.opts<RuntimeOptions>();
+      const candidateCount = resolveCandidateCount(config.candidateCount, runtimeOptions.agents);
+      console.log(`[config] Using ${candidateCount} candidate agent(s).`);
+
       const generation = await generateToolFromIntent({
         request: {
           intent: draft.normalizedIntent,
@@ -169,7 +183,7 @@ export function buildProgram(): Command {
         settings: {
           codexBinary: config.codexBinary,
           codexModel: config.codexModel,
-          candidateCount: config.candidateCount,
+          candidateCount,
           codexTimeoutMs: config.codexTimeoutMs,
           keepWorktrees: config.keepWorktrees
         },
@@ -177,13 +191,38 @@ export function buildProgram(): Command {
           paths,
           repoRoot
         },
-        registry
+        registry,
+        reporter: (event) => printProgress(event)
+      }).catch((error: unknown) => {
+        if (error instanceof GenerationFailureError) {
+          console.error(`\n[error] Generation failed for job ${error.jobId}`);
+          for (const candidate of error.candidates) {
+            console.error(
+              `  - ${candidate.candidateId}: score=${candidate.score} (${candidate.summary})`
+            );
+            console.error(`    codex summary: ${candidate.logs.codexLastMessagePath}`);
+            console.error(`    codex stderr: ${candidate.logs.codexStderrPath}`);
+            console.error(`    compile stderr: ${candidate.logs.compileStderrPath}`);
+            console.error(`    smoke stderr: ${candidate.logs.smokeStderrPath}`);
+          }
+          console.error(`[hint] Job logs: ${error.jobDir}`);
+          console.error(`[hint] Inspect: ${path.join(error.jobDir, "candidate-*/logs/*.log")}`);
+          process.exitCode = 1;
+          return null;
+        }
+
+        throw error;
       });
+
+      if (!generation) {
+        return;
+      }
 
       console.log(`Generated tool '${generation.toolName}' v${generation.version}.`);
       console.log(
         `Selected ${generation.selectedCandidate.candidateId} score=${generation.selectedCandidate.score} (${generation.selectedCandidate.summary}).`
       );
+      console.log(`[info] Generation job artifacts: ${generation.jobDir}`);
 
       const runResult = await runPythonTool(generation.codePath, []);
       const runId = createRunId();
@@ -230,4 +269,34 @@ function createRunId(): string {
   const ts = Date.now();
   const random = Math.random().toString(36).slice(2, 8);
   return `${ts}-${random}`;
+}
+
+function printProgress(event: GenerationProgressEvent): void {
+  const prefix = event.candidateId ? `[${event.candidateId}]` : "[job]";
+  const timestamp = new Date().toLocaleTimeString();
+  console.log(`[${timestamp}]${prefix} ${event.message}`);
+}
+
+function parseInteger(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) {
+    throw new Error(`Invalid integer value: ${value}`);
+  }
+  return parsed;
+}
+
+function resolveCandidateCount(configValue: number, overrideValue: number | undefined): number {
+  if (overrideValue === undefined) {
+    return configValue;
+  }
+
+  if (overrideValue < 1) {
+    return 1;
+  }
+
+  if (overrideValue > 5) {
+    return 5;
+  }
+
+  return overrideValue;
 }

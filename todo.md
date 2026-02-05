@@ -28,6 +28,7 @@
 - [x] Implement candidate promotion to `.infinite/tools/<name>/v<version>/`.
 - [x] Wire natural-intent flow to generate, promote, and auto-run winning candidate.
 - [x] Add baseline unit tests (`spec` + scoring).
+- [x] Add CLI UX override for parallel agents: `--agents <n>` and shorthand `--<n>` (e.g., `--4`).
 
 ## In Progress
 - [ ] Improve prompts and validation to increase candidate pass rate across varied intents.

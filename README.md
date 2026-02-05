@@ -12,6 +12,7 @@ Infinite CLI is a self-extending terminal where any command you can imagine can 
 - Python is the generated tool runtime target.
 - Natural-intent flow now runs an orchestration pipeline:
   - asks one clarification question in interactive sessions
+  - prints live progress updates while generation is running
   - spins up parallel candidate worktrees
   - runs `codex exec` per candidate
   - validates candidates (`manifest`, `py_compile`, `smoke_test.py`)
@@ -23,6 +24,19 @@ Infinite CLI is a self-extending terminal where any command you can imagine can 
 npm install
 npm run build
 node dist/index.js tools
+```
+
+To install command aliases locally for your shell:
+```bash
+npm link
+```
+
+Then use either `infinite` or `icli`.
+
+Examples:
+```bash
+icli make a tiny tool that prints hello from icli --4
+icli --agents 3 make a tiny tool that summarizes json input
 ```
 
 ## API Key and Runtime Config
@@ -43,6 +57,7 @@ Key settings:
 Model behavior:
 - Orchestrator tries `INFINITE_CODEX_MODEL` first.
 - If Codex returns `model_not_found`, it retries automatically with `gpt-5-codex`.
+- CLI runtime override: `--agents <n>` (or shorthand `--<n>`, for example `--4`) overrides `INFINITE_CANDIDATE_COUNT`.
 
 ## Notes
 - Network access and OpenAI API usage are expected.

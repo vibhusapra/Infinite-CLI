@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
+import { normalizeCliArgv } from "./cli/argv.js";
 import { buildProgram } from "./cli/program.js";
 
 async function main(): Promise<void> {
   const program = buildProgram();
-  await program.parseAsync(process.argv);
+  const argv = normalizeCliArgv(process.argv);
+  await program.parseAsync(argv);
 }
 
 main().catch((error: unknown) => {
@@ -12,4 +14,3 @@ main().catch((error: unknown) => {
   console.error(`Error: ${message}`);
   process.exitCode = 1;
 });
-
