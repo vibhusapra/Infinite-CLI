@@ -4,6 +4,7 @@ Infinite CLI is a self-extending terminal where any command you can imagine can 
 ## Current Scaffold (Node.js + TypeScript)
 - CLI command tree:
   - `infinite "<natural command>"`
+  - `icli chat`
   - `infinite tools`
   - `infinite tool show <name>`
   - `infinite tool run <name> [args...]`
@@ -37,6 +38,7 @@ Examples:
 ```bash
 icli make a tiny tool that prints hello from icli --4
 icli --agents 3 make a tiny tool that summarizes json input
+icli chat
 icli --fast make a tiny tool that prints hello fast
 icli --debug make a tiny tool that prints hello with debug artifacts
 ```
@@ -82,6 +84,15 @@ icli tool run <tool-name> -- --arg1 value
 
 # add feedback for future improvement
 icli tool improve <tool-name> --feedback "handle csv edge cases"
+
+# cleanup ephemeral logs/worktrees (default behavior)
+icli clean
+
+# remove generated tool projects + registry tool records
+icli clean --projects
+
+# full cleanup (projects + logs + artifacts)
+icli clean --all --yes
 ```
 
 ## Notes

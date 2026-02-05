@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { REGISTRY_SCHEMA_SQL } from "./schema.js";
 import type {
+  ClearToolsResult,
   LatestToolVersion,
   RunRecordInput,
   ToolDetails,
@@ -343,6 +344,26 @@ export class Registry {
         input.stderrPath ?? null,
         JSON.stringify(input.artifacts ?? null)
       );
+  }
+
+  clearAllTools(): ClearToolsResult {
+    const row = this.db
+      .prepare(
+        `
+        SELECT COUNT(*) AS count
+        FROM tools
+      `
+      )
+      .get() as { count: number };
+
+    this.db.exec(`
+      DELETE FROM tools;
+      DELETE FROM sqlite_sequence WHERE name IN ('tools', 'tool_versions', 'runs', 'feedback');
+    `);
+
+    return {
+      deletedTools: row.count
+    };
   }
 }
 

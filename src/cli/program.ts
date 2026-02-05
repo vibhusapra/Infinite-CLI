@@ -1,23 +1,27 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
 import { loadInfiniteConfig } from "../config/env.js";
 import { ensureRuntimePaths, resolveRuntimePaths } from "../config/runtime-paths.js";
+import { performCleanup } from "../maintenance/cleanup.js";
 import { GenerationFailureError, generateToolFromIntent } from "../orchestrator/generator.js";
 import { draftIntent } from "../orchestrator/intent.js";
 import type { GenerationProgressEvent } from "../orchestrator/types.js";
 import { resolveRepoRoot } from "../orchestrator/worktree-manager.js";
 import { Registry } from "../registry/registry.js";
-import { runPythonTool } from "../runtime/python-runner.js";
 import { printToolDetails, printToolsTable } from "./format.js";
-import { askOneQuestion } from "./prompt.js";
+import { askOneQuestion, confirmYesNo } from "./prompt.js";
+import { parseInteger, resolveRuntimeGenerationConfig, type RuntimeOptions } from "./runtime-options.js";
+import { runStudioSession } from "./studio.js";
+import { runAndRecordByVersion, runLatestToolByName } from "./tool-execution.js";
 
 type JsonOption = { json?: boolean };
 type ImproveOptions = { feedback: string };
-type RuntimeOptions = {
-  agents?: number;
-  fast?: boolean;
-  debug?: boolean;
+type CleanOptions = {
+  projects?: boolean;
+  logs?: boolean;
+  artifacts?: boolean;
+  all?: boolean;
+  yes?: boolean;
 };
 
 export function buildProgram(): Command {
@@ -35,6 +39,70 @@ export function buildProgram(): Command {
     .option("--fast", "Fast mode: defaults to 1 agent and lower generation timeout")
     .option("--debug", "Debug mode: keep worktrees and print extra diagnostics")
     .showHelpAfterError();
+
+  program
+    .command("chat")
+    .description("Open interactive studio mode with onboarding and guided tool building.")
+    .option("-j, --agents <count>", "Parallel candidate agents/worktrees (1-5)", parseInteger)
+    .option("--fast", "Fast mode: defaults to 1 agent and lower generation timeout")
+    .option("--debug", "Debug mode: keep worktrees and keep worktree artifacts")
+    .action(async (options: RuntimeOptions) => {
+      const globalOptions = program.opts<RuntimeOptions>();
+      const mergedOptions = mergeRuntimeOptions(globalOptions, options);
+
+      await runStudioSession({
+        config,
+        paths,
+        registry,
+        options: mergedOptions
+      });
+    });
+
+  program
+    .command("clean")
+    .description("Clean old generated projects and runtime state under .infinite/")
+    .option("--projects", "Remove generated tool projects and registry tool data")
+    .option("--logs", "Remove generation jobs, run logs, and temporary worktrees")
+    .option("--artifacts", "Remove files in .infinite/artifacts")
+    .option("--all", "Remove projects, logs, and artifacts")
+    .option("-y, --yes", "Skip confirmation prompt")
+    .action(async (options: CleanOptions) => {
+      const normalized = normalizeCleanupOptions(options);
+      if (!normalized.projects && !normalized.logs && !normalized.artifacts) {
+        console.log("Nothing to clean.");
+        return;
+      }
+
+      const needsConfirmation = normalized.projects || normalized.all;
+      if (needsConfirmation && !options.yes) {
+        const proceed = await confirmYesNo(
+          "This will delete generated projects and can remove tool history. Continue?",
+          true
+        );
+        if (!proceed) {
+          console.log("Cancelled cleanup.");
+          return;
+        }
+      }
+
+      const summary = performCleanup({
+        paths,
+        registry,
+        options: {
+          projects: normalized.projects,
+          logs: normalized.logs,
+          artifacts: normalized.artifacts
+        }
+      });
+
+      console.log("Cleanup complete.");
+      console.log(`- removed tool records: ${summary.removedToolRecords}`);
+      console.log(`- removed tool directories: ${summary.removedToolDirectories}`);
+      console.log(`- removed job directories: ${summary.removedJobDirectories}`);
+      console.log(`- removed run directories: ${summary.removedRunDirectories}`);
+      console.log(`- removed worktree directories: ${summary.removedWorktreeDirectories}`);
+      console.log(`- removed artifact entries: ${summary.removedArtifactEntries}`);
+    });
 
   program
     .command("tools")
@@ -79,48 +147,17 @@ export function buildProgram(): Command {
     .argument("[args...]", "Arguments passed to the tool entrypoint")
     .description("Direct invocation of a generated tool.")
     .action(async (name: string, args: string[] = []) => {
-      const latestVersion = registry.getLatestVersion(name);
-      if (!latestVersion) {
+      const runResult = await runLatestToolByName({
+        name,
+        args,
+        paths,
+        registry
+      });
+
+      if (!runResult) {
         console.error(`No runnable version found for '${name}'.`);
         process.exitCode = 1;
         return;
-      }
-
-      const entrypoint = path.isAbsolute(latestVersion.codePath)
-        ? latestVersion.codePath
-        : path.resolve(paths.rootDir, latestVersion.codePath);
-
-      if (!existsSync(entrypoint)) {
-        console.error(`Entrypoint missing: ${entrypoint}`);
-        process.exitCode = 1;
-        return;
-      }
-
-      const runResult = await runPythonTool(entrypoint, args);
-
-      const runId = createRunId();
-      const runDir = path.join(paths.runsDir, runId);
-      mkdirSync(runDir, { recursive: true });
-
-      const stdoutPath = path.join(runDir, "stdout.log");
-      const stderrPath = path.join(runDir, "stderr.log");
-
-      writeFileSync(stdoutPath, runResult.stdout, "utf8");
-      writeFileSync(stderrPath, runResult.stderr, "utf8");
-
-      registry.recordRun({
-        toolVersionId: latestVersion.id,
-        command: "python3",
-        args: [entrypoint, ...args],
-        startedAt: runResult.startedAt,
-        endedAt: runResult.endedAt,
-        exitCode: runResult.exitCode,
-        stdoutPath,
-        stderrPath
-      });
-
-      if (runResult.signal) {
-        console.error(`Tool terminated by signal ${runResult.signal}`);
       }
 
       process.exitCode = runResult.exitCode;
@@ -240,25 +277,12 @@ export function buildProgram(): Command {
         console.log(`[debug] Worktrees are kept under: ${paths.worktreesDir}`);
       }
 
-      const runResult = await runPythonTool(generation.codePath, []);
-      const runId = createRunId();
-      const runDir = path.join(paths.runsDir, runId);
-      mkdirSync(runDir, { recursive: true });
-
-      const stdoutPath = path.join(runDir, "stdout.log");
-      const stderrPath = path.join(runDir, "stderr.log");
-      writeFileSync(stdoutPath, runResult.stdout, "utf8");
-      writeFileSync(stderrPath, runResult.stderr, "utf8");
-
-      registry.recordRun({
+      const runResult = await runAndRecordByVersion({
         toolVersionId: generation.toolVersionId,
-        command: "python3",
-        args: [generation.codePath],
-        startedAt: runResult.startedAt,
-        endedAt: runResult.endedAt,
-        exitCode: runResult.exitCode,
-        stdoutPath,
-        stderrPath
+        codePath: generation.codePath,
+        args: [],
+        paths,
+        registry
       });
 
       process.exitCode = runResult.exitCode;
@@ -281,76 +305,45 @@ export function buildProgram(): Command {
   return program;
 }
 
-function createRunId(): string {
-  const ts = Date.now();
-  const random = Math.random().toString(36).slice(2, 8);
-  return `${ts}-${random}`;
-}
-
 function printProgress(event: GenerationProgressEvent): void {
   const prefix = event.candidateId ? `[${event.candidateId}]` : "[job]";
   const timestamp = new Date().toLocaleTimeString();
   console.log(`[${timestamp}]${prefix} ${event.message}`);
 }
 
-function parseInteger(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (Number.isNaN(parsed)) {
-    throw new Error(`Invalid integer value: ${value}`);
-  }
-  return parsed;
+
+function mergeRuntimeOptions(base: RuntimeOptions, override: RuntimeOptions): RuntimeOptions {
+  return {
+    agents: override.agents ?? base.agents,
+    fast: override.fast ?? base.fast,
+    debug: override.debug ?? base.debug
+  };
 }
 
-function resolveCandidateCount(configValue: number, overrideValue: number | undefined): number {
-  if (overrideValue === undefined) {
-    return configValue;
+function normalizeCleanupOptions(options: CleanOptions): {
+  projects: boolean;
+  logs: boolean;
+  artifacts: boolean;
+  all: boolean;
+} {
+  const all = Boolean(options.all);
+  const projects = all || Boolean(options.projects);
+  const logs = all || Boolean(options.logs);
+  const artifacts = all || Boolean(options.artifacts);
+
+  if (!projects && !logs && !artifacts) {
+    return {
+      projects: false,
+      logs: true,
+      artifacts: false,
+      all: false
+    };
   }
-
-  if (overrideValue < 1) {
-    return 1;
-  }
-
-  if (overrideValue > 5) {
-    return 5;
-  }
-
-  return overrideValue;
-}
-
-type RuntimeGenerationConfigInput = {
-  candidateCount: number;
-  codexTimeoutMs: number;
-  keepWorktrees: boolean;
-};
-
-type RuntimeGenerationConfig = {
-  candidateCount: number;
-  codexTimeoutMs: number;
-  keepWorktrees: boolean;
-  fast: boolean;
-  debug: boolean;
-};
-
-function resolveRuntimeGenerationConfig(
-  base: RuntimeGenerationConfigInput,
-  options: RuntimeOptions
-): RuntimeGenerationConfig {
-  const fast = Boolean(options.fast);
-  const debug = Boolean(options.debug);
-
-  const candidateCount = resolveCandidateCount(
-    fast ? 1 : base.candidateCount,
-    options.agents
-  );
-
-  const codexTimeoutMs = fast ? Math.min(base.codexTimeoutMs, 120_000) : base.codexTimeoutMs;
-  const keepWorktrees = debug ? true : base.keepWorktrees;
 
   return {
-    candidateCount,
-    codexTimeoutMs,
-    keepWorktrees,
-    fast,
-    debug
+    projects,
+    logs,
+    artifacts,
+    all
   };
 }

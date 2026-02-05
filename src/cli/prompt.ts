@@ -16,3 +16,30 @@ export async function askOneQuestion(question: string): Promise<string | null> {
   }
 }
 
+export async function confirmYesNo(question: string, defaultNo: boolean = true): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return !defaultNo;
+  }
+
+  const rl = createInterface({ input, output });
+  try {
+    const suffix = defaultNo ? " [y/N]" : " [Y/n]";
+    const answer = (await rl.question(`${question}${suffix}\n> `)).trim().toLowerCase();
+
+    if (answer.length === 0) {
+      return !defaultNo;
+    }
+
+    if (["y", "yes"].includes(answer)) {
+      return true;
+    }
+
+    if (["n", "no"].includes(answer)) {
+      return false;
+    }
+
+    return false;
+  } finally {
+    rl.close();
+  }
+}

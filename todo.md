@@ -30,6 +30,8 @@
 - [x] Add baseline unit tests (`spec` + scoring).
 - [x] Add CLI UX override for parallel agents: `--agents <n>` and shorthand `--<n>` (e.g., `--4`).
 - [x] Add `--fast` and `--debug` runtime presets for quicker or more inspectable generation runs.
+- [x] Add `icli chat` interactive studio with ASCII onboarding and guided build loop.
+- [x] Add cleanup command to remove old projects/logs/artifacts (`icli clean`).
 
 ## In Progress
 - [ ] Improve prompts and validation to increase candidate pass rate across varied intents.

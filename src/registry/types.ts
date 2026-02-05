@@ -57,3 +57,7 @@ export interface UpsertToolVersionInput {
   codePath: string;
   score?: number | null;
 }
+
+export interface ClearToolsResult {
+  deletedTools: number;
+}
