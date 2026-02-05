@@ -1,0 +1,34 @@
+{
+  "name": "infinite-cli",
+  "version": "0.1.0",
+  "description": "Self-extending terminal CLI that generates disposable tools on demand.",
+  "type": "module",
+  "bin": {
+    "infinite": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "cli",
+    "ai",
+    "openai",
+    "tool-generation"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "commander": "^14.0.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2"
+  }
+}
+
