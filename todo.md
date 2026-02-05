@@ -6,6 +6,7 @@
 - Favor speed and iteration over elegance.
 - Assume network access is allowed.
 - Primary integrations: OpenAI APIs (Responses, TTS, etc).
+- Primary implementation stack: Node.js + TypeScript.
 
 ## v0 Scope (Must Have)
 - `infinite "<natural command>" [-- ...args]`
@@ -95,21 +96,21 @@
 - For TTS-style tools, generated code should call OpenAI TTS endpoints directly with `OPENAI_API_KEY`.
 
 ## Suggested Repo Layout
-- `cmd/infinite` CLI entry
-- `internal/cli` parsing and command handlers
-- `internal/orchestrator` generation flow
-- `internal/agents` parallel candidate workers
-- `internal/runtime` run/validate tools
-- `internal/registry` sqlite + filesystem store
-- `internal/models` domain structs
-- `prompts/` generation and improve templates
+- `src/cli` command parsing and handlers
+- `src/orchestrator` generation flow
+- `src/agents` parallel candidate workers
+- `src/runtime` run/validate tools
+- `src/registry` sqlite + filesystem store
+- `src/models` domain types
+- `src/prompts` generation and improve templates
+- `src/tui` optional Ink views (later phase)
 - `.infinite/` runtime state (gitignored)
 
 ## Phase Plan
 
 ### Phase 0 - Foundation (Day 1-2)
-- [ ] Pick implementation language (Go or Node/TS). Recommended: Go for single-binary CLI.
-- [ ] Set up CLI skeleton and config loader.
+- [ ] Confirm implementation language: Node.js + TypeScript.
+- [ ] Set up CLI skeleton (e.g. `commander`/`yargs`) and config loader.
 - [ ] Create `.infinite/` structure and SQLite migration v1.
 - [ ] Implement `infinite tools` (empty list support).
 
@@ -154,14 +155,14 @@
   - Mitigation: version prompt templates and evaluate against fixed test intents.
 
 ## Immediate Next Tasks (Next 5 Coding Steps)
-- [ ] Confirm language choice (recommend Go).
+- [ ] Initialize Node.js + TypeScript project and package scripts.
 - [ ] Scaffold CLI commands and subcommands.
 - [ ] Add SQLite schema and registry interfaces.
 - [ ] Implement `infinite tools` + `tool show` from registry.
 - [ ] Implement one end-to-end generation-run path for a simple OpenAI tool.
 
 ## Questions To Resolve Before Coding Deep
-- Should generated tools be primarily shell scripts, Go snippets, or Node/Python apps?
+- Generated tool runtime confirmed: Python first.
 - Do you want default artifact location to be current directory or `.infinite/artifacts/`?
-- Should `infinite "<intent>"` auto-run generated tool every time, or ask when confidence score is low?
+- Clarification policy confirmed: allow exactly 1 model follow-up question before execution, then proceed.
 - Do you want a `--json` mode for all commands from day one?
