@@ -50,3 +50,10 @@ export interface RunRecordInput {
   artifacts?: unknown;
 }
 
+export interface UpsertToolVersionInput {
+  name: string;
+  version: number;
+  manifest: unknown;
+  codePath: string;
+  score?: number | null;
+}

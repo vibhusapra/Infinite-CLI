@@ -51,8 +51,8 @@ Build and iterate Infinite CLI as a terminal-first system that generates disposa
 - Surfaces actionable error output on failure.
 
 ## Near-Term Priorities
-1. Implement OpenAI-backed candidate generation.
-2. Persist generated tools as versioned artifacts in `.infinite/tools/`.
-3. Auto-run generated tools from the natural-intent path.
-4. Add candidate scoring and parallel generation.
-5. Complete `tool improve` regeneration flow.
+1. Improve generation prompt quality and candidate reliability.
+2. Add richer validation and regression checks for promoted tools.
+3. Complete `tool improve` regeneration flow.
+4. Add structured generation metadata in registry for analytics.
+5. Expand automated tests around orchestration and failure modes.

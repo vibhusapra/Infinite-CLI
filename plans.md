@@ -14,37 +14,34 @@ Ship a terminal-first system where `infinite "<intent>"` can generate and run di
 - CLI command tree exists with registry-backed `tools`, `tool show`, `tool run`, `tool improve`.
 - Python runtime invocation path exists for stored tool versions.
 - Intent intake exists with one clarification question hook.
-- Missing piece: OpenAI-backed generation and install flow.
+- Worktree-based Codex candidate generation, validation, scoring, promotion, and auto-run are implemented.
 
 ## Phase 1 - Generation MVP
 ### Deliverables
-- OpenAI generation client and config loading.
-- Prompt template for candidate generation.
-- Parse model output into:
-  - tool name
-  - manifest JSON
-  - Python entrypoint source
-- Write generated tool files to `.infinite/tools/<name>/<version>/`.
-- Insert tool/version records into SQLite.
-- Auto-run generated tool when called from `infinite "<intent>"`.
+- [x] OpenAI/Codex generation config loading.
+- [x] Prompt template for candidate generation.
+- [x] Parse model output via filesystem artifact contract.
+- [x] Write generated tool files to `.infinite/tools/<name>/<version>/`.
+- [x] Insert tool/version records into SQLite.
+- [x] Auto-run generated tool when called from `infinite "<intent>"`.
 
 ### Acceptance Criteria
-- Running `infinite "<intent>"` on a missing tool generates and runs a Python tool.
-- Tool appears in `infinite tools`.
-- `infinite tool show <name>` includes the new version and manifest.
-- Run logs are written under `.infinite/runs/`.
+- [x] Running `infinite "<intent>"` on a missing tool generates and runs a Python tool.
+- [x] Tool appears in `infinite tools`.
+- [x] `infinite tool show <name>` includes the new version and manifest.
+- [x] Run logs are written under `.infinite/runs/`.
 
 ## Phase 2 - Parallel Candidates
 ### Deliverables
-- Worker pool for N parallel generation attempts.
-- Candidate scoring function (valid parse, self-check result, run outcome, latency).
-- Best-candidate selection and install.
-- Rejected candidate storage for debugging.
+- [x] Worker pool for N parallel generation attempts.
+- [x] Candidate scoring function (valid parse, self-check result, run outcome, latency).
+- [x] Best-candidate selection and install.
+- [x] Rejected candidate storage for debugging.
 
 ### Acceptance Criteria
-- Generation runs with configurable `N`.
-- Failed candidates do not block successful install of best candidate.
-- Selection decision is visible in logs/metadata.
+- [x] Generation runs with configurable `N`.
+- [x] Failed candidates do not block successful install of best candidate.
+- [x] Selection decision is visible in logs/metadata.
 
 ## Phase 3 - Improvement Loop
 ### Deliverables
@@ -76,8 +73,8 @@ Ship a terminal-first system where `infinite "<intent>"` can generate and run di
 - Add `--json` support incrementally, starting with read-only commands.
 
 ## Near-Term Sprint Checklist
-- [ ] Add `src/openai/client.ts` and config loader.
-- [ ] Add `src/prompts/generate-tool.ts`.
-- [ ] Add `src/orchestrator/generate.ts`.
-- [ ] Add registry write methods for new tool/version creation.
-- [ ] Wire `infinite "<intent>"` to full generate-install-run path.
+- [ ] Improve candidate prompt strategies by intent type.
+- [ ] Add registry table for generation jobs/candidate metadata.
+- [ ] Add regression comparison when improving existing tools.
+- [ ] Add integration test fixture for codex-disabled fallback handling.
+- [ ] Add `--json` output support for generation and run subcommands.

@@ -13,8 +13,7 @@ export function draftIntent(intent: string): IntentDraft {
   return {
     normalizedIntent,
     clarificationQuestion: hasOutputHint
-      ? undefined
+      ? "Any final constraints before I generate this tool (inputs, format, or edge-cases)?"
       : "What output should this tool produce, and where should it write it?"
   };
 }
-

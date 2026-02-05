@@ -1,8 +1,11 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
+import { loadInfiniteConfig } from "../config/env.js";
 import { ensureRuntimePaths, resolveRuntimePaths } from "../config/runtime-paths.js";
+import { generateToolFromIntent } from "../orchestrator/generator.js";
 import { draftIntent } from "../orchestrator/intent.js";
+import { resolveRepoRoot } from "../orchestrator/worktree-manager.js";
 import { Registry } from "../registry/registry.js";
 import { runPythonTool } from "../runtime/python-runner.js";
 import { printToolDetails, printToolsTable } from "./format.js";
@@ -14,6 +17,7 @@ type ImproveOptions = { feedback: string };
 export function buildProgram(): Command {
   const paths = resolveRuntimePaths(process.cwd());
   ensureRuntimePaths(paths);
+  const config = loadInfiniteConfig();
 
   const registry = new Registry(paths.dbPath);
 
@@ -152,13 +156,57 @@ export function buildProgram(): Command {
         clarificationResponse = await askOneQuestion(draft.clarificationQuestion);
       }
 
-      console.log("Intent intake captured.");
-      console.log(`Intent: ${draft.normalizedIntent}`);
-      if (draft.clarificationQuestion) {
-        console.log(`Clarification asked: ${draft.clarificationQuestion}`);
-        console.log(`Clarification response: ${clarificationResponse ?? "(none provided)"}`);
+      if (!config.openAIApiKey) {
+        console.error("Warning: OPENAI_API_KEY is not set. Generated OpenAI tools may fail at runtime.");
       }
-      console.log("Generation pipeline scaffolded. Next step: wire OpenAI candidate generation.");
+
+      const repoRoot = await resolveRepoRoot(process.cwd());
+      const generation = await generateToolFromIntent({
+        request: {
+          intent: draft.normalizedIntent,
+          clarification: clarificationResponse
+        },
+        settings: {
+          codexBinary: config.codexBinary,
+          codexModel: config.codexModel,
+          candidateCount: config.candidateCount,
+          codexTimeoutMs: config.codexTimeoutMs,
+          keepWorktrees: config.keepWorktrees
+        },
+        context: {
+          paths,
+          repoRoot
+        },
+        registry
+      });
+
+      console.log(`Generated tool '${generation.toolName}' v${generation.version}.`);
+      console.log(
+        `Selected ${generation.selectedCandidate.candidateId} score=${generation.selectedCandidate.score} (${generation.selectedCandidate.summary}).`
+      );
+
+      const runResult = await runPythonTool(generation.codePath, []);
+      const runId = createRunId();
+      const runDir = path.join(paths.runsDir, runId);
+      mkdirSync(runDir, { recursive: true });
+
+      const stdoutPath = path.join(runDir, "stdout.log");
+      const stderrPath = path.join(runDir, "stderr.log");
+      writeFileSync(stdoutPath, runResult.stdout, "utf8");
+      writeFileSync(stderrPath, runResult.stderr, "utf8");
+
+      registry.recordRun({
+        toolVersionId: generation.toolVersionId,
+        command: "python3",
+        args: [generation.codePath],
+        startedAt: runResult.startedAt,
+        endedAt: runResult.endedAt,
+        exitCode: runResult.exitCode,
+        stdoutPath,
+        stderrPath
+      });
+
+      process.exitCode = runResult.exitCode;
     });
 
   const closeRegistry = (): void => {
@@ -183,4 +231,3 @@ function createRunId(): string {
   const random = Math.random().toString(36).slice(2, 8);
   return `${ts}-${random}`;
 }
-

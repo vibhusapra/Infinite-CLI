@@ -21,28 +21,27 @@
 - [x] Implement Python runtime invocation path for existing tool versions.
 - [x] Capture run logs to `.infinite/runs/<run-id>/stdout.log` and `stderr.log`.
 - [x] Add TypeScript compile and type-check scripts.
+- [x] Add environment config and `.env.example` for API/model settings.
+- [x] Implement worktree-based parallel candidate generation via Codex CLI.
+- [x] Implement candidate validation (`manifest`, `py_compile`, `smoke_test.py`) and scoring.
+- [x] Implement candidate promotion to `.infinite/tools/<name>/v<version>/`.
+- [x] Wire natural-intent flow to generate, promote, and auto-run winning candidate.
+- [x] Add baseline unit tests (`spec` + scoring).
 
 ## In Progress
-- [ ] Wire OpenAI-backed candidate generation into `infinite "<intent>"`.
+- [ ] Improve prompts and validation to increase candidate pass rate across varied intents.
 
 ## Next Up (Priority Order)
-- [ ] Add OpenAI client/config module:
-  - [ ] model
-  - [ ] API key source (`OPENAI_API_KEY`)
-  - [ ] max tokens / temperature
-- [ ] Define candidate artifact format (manifest + Python entrypoint + optional self-check).
-- [ ] Implement single-candidate generation path:
-  - [ ] prompt template
-  - [ ] response parsing
-  - [ ] filesystem write to `.infinite/tools/<name>/<version>/`
-  - [ ] registry insert (`tools` + `tool_versions`)
-- [ ] Auto-run newly generated tool after install.
-- [ ] Persist generation event metadata for debugging.
+- [ ] Add richer prompt variants per candidate strategy (minimal/robust/fast).
+- [ ] Add stronger candidate regression checks beyond smoke tests.
+- [ ] Store generation summary metadata in registry (job id, candidate ranking details).
+- [ ] Add `--json` mode for `tool run` and natural-intent generation outputs.
+- [ ] Add retry policy for transient Codex API failures.
 
 ## After Single Candidate Works
-- [ ] Add parallel candidate generation (N configurable).
-- [ ] Add candidate scoring and selection.
-- [ ] Persist rejected candidates for inspection.
+- [x] Add parallel candidate generation (N configurable).
+- [x] Add candidate scoring and selection.
+- [x] Persist rejected candidates for inspection.
 - [ ] Implement `tool improve` regeneration path using feedback and run history.
 
 ## Open Decisions
@@ -52,8 +51,9 @@
 - [ ] Standardize `--json` output mode across all commands.
 
 ## Quality Gates for v0
-- [ ] `npm run check` passes.
-- [ ] `npm run build` passes.
-- [ ] `infinite tools` works with empty and non-empty registries.
+- [x] `npm run check` passes.
+- [x] `npm run build` passes.
+- [x] `npm run test` passes.
+- [x] `infinite tools` works with empty and non-empty registries.
 - [ ] `infinite "<intent>"` can generate and run at least one OpenAI-based tool end-to-end.
 - [ ] `tool improve` creates a new version linked to previous lineage.

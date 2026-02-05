@@ -7,7 +7,8 @@ import type {
   RunRecordInput,
   ToolDetails,
   ToolListRow,
-  ToolVersionDetails
+  ToolVersionDetails,
+  UpsertToolVersionInput
 } from "./types.js";
 
 type ToolRow = {
@@ -49,6 +50,10 @@ type LatestVersionRow = {
 };
 
 type ToolIdRow = {
+  id: number;
+};
+
+type ToolVersionIdRow = {
   id: number;
 };
 
@@ -222,6 +227,91 @@ export class Registry {
       .run(tool.id, text, new Date().toISOString());
 
     return true;
+  }
+
+  getNextVersion(name: string): number {
+    const row = this.db
+      .prepare(
+        `
+        SELECT latest_version
+        FROM tools
+        WHERE name = ?
+        LIMIT 1
+      `
+      )
+      .get(name) as { latest_version: number } | undefined;
+
+    if (!row) {
+      return 1;
+    }
+
+    return row.latest_version + 1;
+  }
+
+  upsertToolVersion(input: UpsertToolVersionInput): number {
+    const now = new Date().toISOString();
+
+    const existing = this.db
+      .prepare(
+        `
+        SELECT id
+        FROM tools
+        WHERE name = ?
+        LIMIT 1
+      `
+      )
+      .get(input.name) as ToolIdRow | undefined;
+
+    let toolId: number;
+    if (!existing) {
+      const insertResult = this.db
+        .prepare(
+          `
+          INSERT INTO tools (name, created_at, latest_version, status)
+          VALUES (?, ?, ?, 'active')
+        `
+        )
+        .run(input.name, now, input.version);
+      toolId = Number(insertResult.lastInsertRowid);
+    } else {
+      toolId = existing.id;
+    }
+
+    this.db
+      .prepare(
+        `
+        INSERT INTO tool_versions (tool_id, version, manifest_json, code_path, created_at, score)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `
+      )
+      .run(toolId, input.version, JSON.stringify(input.manifest), input.codePath, now, input.score ?? null);
+
+    this.db
+      .prepare(
+        `
+        UPDATE tools
+        SET latest_version = ?, status = 'active'
+        WHERE id = ?
+      `
+      )
+      .run(input.version, toolId);
+
+    const versionRow = this.db
+      .prepare(
+        `
+        SELECT id
+        FROM tool_versions
+        WHERE tool_id = ? AND version = ?
+        LIMIT 1
+      `
+      )
+      .get(toolId, input.version) as ToolVersionIdRow | undefined;
+
+    if (!versionRow) {
+      throw new Error(`Failed to resolve saved version id for ${input.name}@${input.version}`);
+    }
+
+    return versionRow.id;
   }
 
   recordRun(input: RunRecordInput): void {
