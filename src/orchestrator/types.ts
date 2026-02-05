@@ -27,7 +27,19 @@ export interface GenerationSettings {
   candidateCount: number;
   codexTimeoutMs: number;
   keepWorktrees: boolean;
+  strategy: "adaptive" | "parallel";
+  scoreCutoff: number;
+  retryBudget: number;
+  fanoutDelayMs: number;
 }
+
+export type CandidateFailureKind =
+  | "none"
+  | "model_not_found"
+  | "unsupported_value"
+  | "timeout"
+  | "transient"
+  | "unknown";
 
 export interface CandidatePaths {
   candidateId: string;
@@ -56,6 +68,8 @@ export interface CandidateEvaluation {
   isValid: boolean;
   summary: string;
   elapsedMs: number;
+  attempts: number;
+  failureKind: CandidateFailureKind;
   logs: {
     codexLastMessagePath: string;
     codexStdoutPath: string;
@@ -80,13 +94,18 @@ export interface GenerationResult {
 
 export type GenerationProgressPhase =
   | "job-started"
+  | "scheduler-started"
+  | "scheduler-fanout"
   | "candidate-started"
+  | "candidate-retry"
   | "candidate-codex-running"
   | "candidate-codex-heartbeat"
   | "candidate-codex-finished"
   | "candidate-evaluating"
   | "candidate-finished"
   | "candidate-failed"
+  | "scheduler-early-stop"
+  | "scheduler-drain"
   | "selection-complete"
   | "promotion-complete";
 

@@ -10,6 +10,8 @@ export interface RunOutcome {
   runDir: string;
   stdoutPath: string;
   stderrPath: string;
+  stdout: string;
+  stderr: string;
 }
 
 interface RunByVersionInput {
@@ -18,6 +20,7 @@ interface RunByVersionInput {
   args: string[];
   paths: RuntimePaths;
   registry: Registry;
+  streamOutput?: boolean;
 }
 
 interface RunLatestByNameInput {
@@ -25,6 +28,7 @@ interface RunLatestByNameInput {
   args: string[];
   paths: RuntimePaths;
   registry: Registry;
+  streamOutput?: boolean;
 }
 
 export async function runLatestToolByName(input: RunLatestByNameInput): Promise<RunOutcome | null> {
@@ -38,7 +42,8 @@ export async function runLatestToolByName(input: RunLatestByNameInput): Promise<
     codePath: latestVersion.codePath,
     args: input.args,
     paths: input.paths,
-    registry: input.registry
+    registry: input.registry,
+    streamOutput: input.streamOutput
   });
 }
 
@@ -51,7 +56,9 @@ export async function runAndRecordByVersion(input: RunByVersionInput): Promise<R
     throw new Error(`Entrypoint missing: ${entrypoint}`);
   }
 
-  const runResult = await runPythonTool(entrypoint, input.args);
+  const runResult = await runPythonTool(entrypoint, input.args, {
+    streamOutput: input.streamOutput
+  });
   const runId = createRunId();
   const runDir = path.join(input.paths.runsDir, runId);
   mkdirSync(runDir, { recursive: true });
@@ -81,7 +88,9 @@ export async function runAndRecordByVersion(input: RunByVersionInput): Promise<R
     entrypoint,
     runDir,
     stdoutPath,
-    stderrPath
+    stderrPath,
+    stdout: runResult.stdout,
+    stderr: runResult.stderr
   };
 }
 
@@ -90,4 +99,3 @@ function createRunId(): string {
   const random = Math.random().toString(36).slice(2, 8);
   return `${ts}-${random}`;
 }
-

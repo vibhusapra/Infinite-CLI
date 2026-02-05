@@ -21,17 +21,22 @@ Build and iterate Infinite CLI as a terminal-first system that generates disposa
 - `infinite "<intent>"`
 - `icli <intent>` (alias of `infinite`)
 - `icli chat` (interactive onboarding + guided build studio)
-- Runtime flags: `--agents <n>` / `--<n>`, `--fast`, `--debug`
+- Runtime flags: `--agents <n>` / `--<n>`, `--strategy <adaptive|parallel>`, `--score-cutoff`, `--retry-budget`, `--fanout-delay-ms`, `--fast`, `--debug`, `--narrate` / `--no-narrate`
 - Cleanup: `icli clean`, `icli clean --projects`, `icli clean --all --yes`
 - `infinite tools`
 - `infinite tool show <name>`
 - `infinite tool run <name> [args...]`
 - `infinite tool improve <name> --feedback "<text>"`
+- `infinite tool clean <name> [--yes]`
 
 ## Execution Policy
 - Allow one clarification question before generation/execution when needed.
 - After clarification (or no answer), proceed without additional interactive prompts.
 - Keep execution permissive for local workflows.
+- Stream raw progress logs by default, with optional secondary LLM narration (`Plan`, `Progress`, `Next`).
+- If a generated tool declares required args, skip zero-arg auto-run and print a concrete invocation template.
+- Default scheduler strategy is adaptive (1->N fanout with early stop on high-quality candidates).
+- Codex generation retries known compatibility/transient failures with bounded retry budget.
 
 ## Repository Map
 - `src/index.ts` CLI entrypoint.

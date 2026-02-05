@@ -91,6 +91,8 @@ export async function evaluateCandidate(input: EvaluateCandidateInput): Promise<
     isValid: scoreDetails.isValid,
     summary: scoreDetails.summary,
     elapsedMs: input.elapsedMs,
+    attempts: 1,
+    failureKind: "none",
     logs: {
       codexLastMessagePath: input.paths.codexLastMessagePath,
       codexStdoutPath: input.paths.codexStdoutPath,

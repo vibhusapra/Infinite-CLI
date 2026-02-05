@@ -9,8 +9,17 @@ export interface PythonRunResult {
   stderr: string;
 }
 
-export async function runPythonTool(entrypoint: string, args: string[]): Promise<PythonRunResult> {
+interface RunPythonToolOptions {
+  streamOutput?: boolean;
+}
+
+export async function runPythonTool(
+  entrypoint: string,
+  args: string[],
+  options: RunPythonToolOptions = {}
+): Promise<PythonRunResult> {
   const startedAt = new Date().toISOString();
+  const streamOutput = options.streamOutput ?? true;
 
   return new Promise<PythonRunResult>((resolve, reject) => {
     const child = spawn("python3", [entrypoint, ...args], {
@@ -23,12 +32,16 @@ export async function runPythonTool(entrypoint: string, args: string[]): Promise
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
-      process.stdout.write(chunk);
+      if (streamOutput) {
+        process.stdout.write(chunk);
+      }
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
       stderrChunks.push(chunk);
-      process.stderr.write(chunk);
+      if (streamOutput) {
+        process.stderr.write(chunk);
+      }
     });
 
     child.on("error", (error) => {
@@ -47,4 +60,3 @@ export async function runPythonTool(entrypoint: string, args: string[]): Promise
     });
   });
 }
-

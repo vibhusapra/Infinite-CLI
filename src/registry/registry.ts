@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { REGISTRY_SCHEMA_SQL } from "./schema.js";
 import type {
   ClearToolsResult,
+  DeleteToolResult,
   LatestToolVersion,
   RunRecordInput,
   ToolDetails,
@@ -363,6 +364,21 @@ export class Registry {
 
     return {
       deletedTools: row.count
+    };
+  }
+
+  deleteToolByName(name: string): DeleteToolResult {
+    const result = this.db
+      .prepare(
+        `
+        DELETE FROM tools
+        WHERE name = ?
+      `
+      )
+      .run(name);
+
+    return {
+      deleted: result.changes > 0
     };
   }
 }

@@ -2,12 +2,23 @@ export type RuntimeOptions = {
   agents?: number;
   fast?: boolean;
   debug?: boolean;
+  narrate?: boolean;
+  strategy?: GenerationStrategy;
+  scoreCutoff?: number;
+  retryBudget?: number;
+  fanoutDelayMs?: number;
 };
+
+export type GenerationStrategy = "adaptive" | "parallel";
 
 export type RuntimeGenerationConfigInput = {
   candidateCount: number;
   codexTimeoutMs: number;
   keepWorktrees: boolean;
+  strategy: GenerationStrategy;
+  scoreCutoff: number;
+  retryBudget: number;
+  fanoutDelayMs: number;
 };
 
 export type RuntimeGenerationConfig = {
@@ -16,6 +27,10 @@ export type RuntimeGenerationConfig = {
   keepWorktrees: boolean;
   fast: boolean;
   debug: boolean;
+  strategy: GenerationStrategy;
+  scoreCutoff: number;
+  retryBudget: number;
+  fanoutDelayMs: number;
 };
 
 export function parseInteger(value: string): number {
@@ -24,6 +39,14 @@ export function parseInteger(value: string): number {
     throw new Error(`Invalid integer value: ${value}`);
   }
   return parsed;
+}
+
+export function parseStrategyOption(value: string): GenerationStrategy {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "adaptive" || normalized === "parallel") {
+    return normalized;
+  }
+  throw new Error(`Invalid strategy value: ${value}. Expected adaptive or parallel.`);
 }
 
 export function resolveCandidateCount(configValue: number, overrideValue: number | undefined): number {
@@ -56,13 +79,31 @@ export function resolveRuntimeGenerationConfig(
 
   const codexTimeoutMs = fast ? Math.min(base.codexTimeoutMs, 120_000) : base.codexTimeoutMs;
   const keepWorktrees = debug ? true : base.keepWorktrees;
+  const strategy = options.strategy ?? base.strategy;
+  const scoreCutoff = resolveBoundedNumber(base.scoreCutoff, options.scoreCutoff, 50, 200);
+  const retryBudget = resolveBoundedNumber(base.retryBudget, options.retryBudget, 0, 2);
+  const fanoutDelayMs = resolveBoundedNumber(base.fanoutDelayMs, options.fanoutDelayMs, 0, 30_000);
 
   return {
     candidateCount,
     codexTimeoutMs,
     keepWorktrees,
     fast,
-    debug
+    debug,
+    strategy,
+    scoreCutoff,
+    retryBudget,
+    fanoutDelayMs
   };
 }
 
+function resolveBoundedNumber(base: number, override: number | undefined, min: number, max: number): number {
+  const value = override === undefined ? base : override;
+  if (value < min) {
+    return min;
+  }
+  if (value > max) {
+    return max;
+  }
+  return value;
+}

@@ -32,6 +32,11 @@
 - [x] Add `--fast` and `--debug` runtime presets for quicker or more inspectable generation runs.
 - [x] Add `icli chat` interactive studio with ASCII onboarding and guided build loop.
 - [x] Add cleanup command to remove old projects/logs/artifacts (`icli clean`).
+- [x] Add per-tool cleanup command (`icli tool clean <name>`).
+- [x] Add secondary LLM narration stream for generation progress (`--narrate`, `/narrate` in chat).
+- [x] Skip unsafe zero-arg auto-run for tools that require input args; print run templates instead.
+- [x] Add adaptive scheduler mode (1->N fanout with early-stop cutoff) and configurable strategy flags.
+- [x] Add Codex compatibility/transient retry policy with bounded retry budget.
 
 ## In Progress
 - [ ] Improve prompts and validation to increase candidate pass rate across varied intents.

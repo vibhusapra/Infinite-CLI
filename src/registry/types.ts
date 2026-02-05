@@ -61,3 +61,7 @@ export interface UpsertToolVersionInput {
 export interface ClearToolsResult {
   deletedTools: number;
 }
+
+export interface DeleteToolResult {
+  deleted: boolean;
+}

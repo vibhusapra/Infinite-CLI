@@ -30,8 +30,9 @@ const STOP_WORDS = new Set([
 
 export function buildCodexPrompt(input: PromptBuildInput): string {
   const clarification = input.clarification?.trim();
+  const extraInstructions = buildIntentSpecificInstructions(input.intent);
 
-  return [
+  const promptLines = [
     "You are implementing one candidate for Infinite CLI.",
     `Candidate ID: ${input.candidateId}`,
     "",
@@ -46,15 +47,31 @@ export function buildCodexPrompt(input: PromptBuildInput): string {
     "",
     "Requirements:",
     "- tool.py must be runnable with python3 and use argparse.",
+    "- Build for terminal users: predictable file-in/file-out behavior and clear --help text.",
     "- If external API access is required, use OPENAI_API_KEY from env.",
     "- Keep dependencies standard-library only when possible.",
+    "- Prefer a single primary input argument and optional flags over many required positional arguments.",
+    "- If output can be textual, print to stdout by default and allow optional --out to write a file.",
+    "- If output must be a file (for example audio/binary), require --out as a named flag, not a required positional argument.",
+    "- manifest.json must match tool.py argument behavior (set required=true only when truly required).",
+    "- Include at least one concrete runnable command in manifest.examples.",
     "- smoke_test.py must run fast and exit 0 when tool.py is healthy.",
+    "- smoke_test.py should exercise --help and one local happy-path invocation.",
     "- manifest.json must be valid JSON with keys:",
     '  name (kebab-case), description, version ("1.0.0"), runtime ("python"), entrypoint ("tool.py"), examples (array of strings), arguments (array).',
     "",
     "After writing files, print DONE.",
     "Do not ask follow-up questions."
-  ].join("\n");
+  ];
+
+  if (extraInstructions.length > 0) {
+    promptLines.push("", "Intent-specific requirements:");
+    for (const instruction of extraInstructions) {
+      promptLines.push(`- ${instruction}`);
+    }
+  }
+
+  return promptLines.join("\n");
 }
 
 export function deriveFallbackToolName(intent: string): string {
@@ -136,3 +153,36 @@ export function normalizeManifest(raw: unknown, fallbackIntent: string): ToolMan
   };
 }
 
+function buildIntentSpecificInstructions(intent: string): string[] {
+  const lowered = intent.toLowerCase();
+  const instructions: string[] = [];
+
+  if (lowered.includes("pdf") && lowered.includes("summar")) {
+    instructions.push(
+      "Support input via positional path argument. Accept both .pdf and .txt so smoke tests can run without external dependencies."
+    );
+    instructions.push(
+      "If input is .pdf, extract text with lazy optional imports: prefer pypdf, then try pdftotext subprocess, otherwise print a clear install hint and exit non-zero."
+    );
+    instructions.push(
+      "If OPENAI_API_KEY is available, call OpenAI API for summarization. If missing, use a deterministic local fallback summary so basic use still works."
+    );
+    instructions.push(
+      "Expose optional --out for writing summary to file; if --out is omitted, print summary to stdout."
+    );
+    instructions.push(
+      "Do not require output_path as a positional argument."
+    );
+    instructions.push(
+      "smoke_test.py must validate the .txt path flow and fallback summary behavior without requiring network."
+    );
+  }
+
+  if (lowered.includes("tts") || lowered.includes("mp3")) {
+    instructions.push(
+      "Require --out and write binary output correctly. smoke_test.py can validate argument handling without live API calls."
+    );
+  }
+
+  return instructions;
+}

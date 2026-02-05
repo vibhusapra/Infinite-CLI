@@ -34,22 +34,25 @@ export async function generateToolFromIntent(input: GenerateToolInput): Promise<
   });
 
   const worktreeManager = new WorktreeManager(input.context.repoRoot, input.context.paths.worktreesDir);
-
-  const candidatePromises = Array.from({ length: input.settings.candidateCount }, (_, index) => {
-    const candidateIndex = index + 1;
-    return runCandidate({
-      candidateIndex,
-      jobId,
-      jobDir,
-      request: input.request,
-      settings: input.settings,
-      context: input.context,
-      worktreeManager,
-      reporter: input.reporter
-    });
+  input.reporter?.({
+    phase: "scheduler-started",
+    jobId,
+    message: `Scheduler strategy=${input.settings.strategy} cutoff=${input.settings.scoreCutoff} maxCandidates=${input.settings.candidateCount}`
   });
 
-  const allCandidates = await Promise.all(candidatePromises);
+  const allCandidates = input.settings.strategy === "parallel"
+    ? await runCandidatesInParallel({
+        ...input,
+        jobId,
+        jobDir,
+        worktreeManager
+      })
+    : await runCandidatesAdaptive({
+        ...input,
+        jobId,
+        jobDir,
+        worktreeManager
+      });
   const selectedCandidate = selectBestCandidate(allCandidates);
 
   if (!selectedCandidate) {
@@ -97,7 +100,9 @@ export async function generateToolFromIntent(input: GenerateToolInput): Promise<
           candidateId: candidate.candidateId,
           score: candidate.score,
           summary: candidate.summary,
-          isValid: candidate.isValid
+          isValid: candidate.isValid,
+          attempts: candidate.attempts,
+          failureKind: candidate.failureKind
         }))
       },
       null,
@@ -133,6 +138,79 @@ interface RunCandidateInput {
   context: OrchestratorContext;
   worktreeManager: WorktreeManager;
   reporter?: GenerationProgressReporter;
+}
+
+interface RunCandidatesInput extends GenerateToolInput {
+  jobId: string;
+  jobDir: string;
+  worktreeManager: WorktreeManager;
+}
+
+async function runCandidatesInParallel(input: RunCandidatesInput): Promise<CandidateEvaluation[]> {
+  const candidatePromises = Array.from({ length: input.settings.candidateCount }, (_, index) => {
+    const candidateIndex = index + 1;
+    return runCandidate({
+      candidateIndex,
+      jobId: input.jobId,
+      jobDir: input.jobDir,
+      request: input.request,
+      settings: input.settings,
+      context: input.context,
+      worktreeManager: input.worktreeManager,
+      reporter: input.reporter
+    });
+  });
+
+  return Promise.all(candidatePromises);
+}
+
+async function runCandidatesAdaptive(input: RunCandidatesInput): Promise<CandidateEvaluation[]> {
+  const results: CandidateEvaluation[] = [];
+  for (let index = 1; index <= input.settings.candidateCount; index += 1) {
+    if (index > 1) {
+      const previous = results[results.length - 1];
+      input.reporter?.({
+        phase: "scheduler-fanout",
+        jobId: input.jobId,
+        message: `Launching candidate-${index} because candidate-${index - 1} was not good enough (score=${previous?.score ?? "n/a"}).`
+      });
+      if (input.settings.fanoutDelayMs > 0) {
+        await delay(input.settings.fanoutDelayMs);
+      }
+    }
+
+    const candidate = await runCandidate({
+      candidateIndex: index,
+      jobId: input.jobId,
+      jobDir: input.jobDir,
+      request: input.request,
+      settings: input.settings,
+      context: input.context,
+      worktreeManager: input.worktreeManager,
+      reporter: input.reporter
+    });
+
+    results.push(candidate);
+    if (isEarlyStopCandidate(candidate, input.settings.scoreCutoff)) {
+      input.reporter?.({
+        phase: "scheduler-early-stop",
+        jobId: input.jobId,
+        candidateId: candidate.candidateId,
+        message: `Early stop: ${candidate.candidateId} reached score=${candidate.score} (cutoff=${input.settings.scoreCutoff}).`
+      });
+      break;
+    }
+  }
+
+  if (results.length < input.settings.candidateCount) {
+    input.reporter?.({
+      phase: "scheduler-drain",
+      jobId: input.jobId,
+      message: `Adaptive scheduler stopped at ${results.length}/${input.settings.candidateCount} candidates.`
+    });
+  }
+
+  return results;
 }
 
 async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluation> {
@@ -182,10 +260,19 @@ async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluati
       codexBinary: input.settings.codexBinary,
       codexModel: input.settings.codexModel,
       timeoutMs: input.settings.codexTimeoutMs,
+      retryBudget: input.settings.retryBudget,
       worktreeDir: worktreeHandle.path,
       outputDir: path.join(worktreeHandle.path, "_infinite_output"),
       outputLastMessagePath: paths.codexLastMessagePath,
-      prompt
+      prompt,
+      onRetry: (event) => {
+        input.reporter?.({
+          phase: "candidate-retry",
+          jobId: input.jobId,
+          candidateId,
+          message: `${candidateId}: retrying codex attempt=${event.attempt} model=${event.model} reason=${event.reason}`
+        });
+      }
     });
     stopHeartbeat(heartbeat);
     heartbeat = null;
@@ -224,12 +311,14 @@ async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluati
       codexResult: codexResult.process,
       elapsedMs: Date.now() - start
     });
+    evaluation.attempts = codexResult.attempts;
+    evaluation.failureKind = codexResult.failureKind;
 
     input.reporter?.({
       phase: "candidate-finished",
       jobId: input.jobId,
       candidateId,
-      message: `${candidateId}: score=${evaluation.score} (${evaluation.summary})`
+      message: `${candidateId}: score=${evaluation.score} (${evaluation.summary}) attempts=${evaluation.attempts}`
     });
 
     return evaluation;
@@ -262,6 +351,8 @@ async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluati
       isValid: false,
       summary: "candidate-crashed",
       elapsedMs: Date.now() - start,
+      attempts: 1,
+      failureKind: "unknown",
       logs: {
         codexLastMessagePath: paths.codexLastMessagePath,
         codexStdoutPath: paths.codexStdoutPath,
@@ -285,6 +376,14 @@ async function runCandidate(input: RunCandidateInput): Promise<CandidateEvaluati
       }
     }
   }
+}
+
+export function isEarlyStopCandidate(candidate: CandidateEvaluation, scoreCutoff: number): boolean {
+  return candidate.isValid && candidate.score >= scoreCutoff;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function createCandidatePaths(jobDir: string, jobId: string, candidateId: string): CandidatePaths {

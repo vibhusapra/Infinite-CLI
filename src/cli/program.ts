@@ -1,21 +1,25 @@
+import { rmSync } from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
 import { loadInfiniteConfig } from "../config/env.js";
 import { ensureRuntimePaths, resolveRuntimePaths } from "../config/runtime-paths.js";
 import { performCleanup } from "../maintenance/cleanup.js";
+import { ProgressNarrator } from "../narration/progress-narrator.js";
 import { GenerationFailureError, generateToolFromIntent } from "../orchestrator/generator.js";
 import { draftIntent } from "../orchestrator/intent.js";
 import type { GenerationProgressEvent } from "../orchestrator/types.js";
 import { resolveRepoRoot } from "../orchestrator/worktree-manager.js";
 import { Registry } from "../registry/registry.js";
 import { printToolDetails, printToolsTable } from "./format.js";
+import { formatRunTemplate, getPreferredManifestExample, getRequiredManifestArgs } from "./manifest-hints.js";
 import { askOneQuestion, confirmYesNo } from "./prompt.js";
-import { parseInteger, resolveRuntimeGenerationConfig, type RuntimeOptions } from "./runtime-options.js";
+import { parseInteger, parseStrategyOption, resolveRuntimeGenerationConfig, type RuntimeOptions } from "./runtime-options.js";
 import { runStudioSession } from "./studio.js";
 import { runAndRecordByVersion, runLatestToolByName } from "./tool-execution.js";
 
 type JsonOption = { json?: boolean };
 type ImproveOptions = { feedback: string };
+type ToolCleanOptions = { yes?: boolean };
 type CleanOptions = {
   projects?: boolean;
   logs?: boolean;
@@ -36,16 +40,28 @@ export function buildProgram(): Command {
     .name("infinite")
     .description("Generate, run, and improve disposable CLI tools.")
     .option("-j, --agents <count>", "Parallel candidate agents/worktrees (1-5)", parseInteger)
+    .option("--strategy <mode>", "Candidate strategy: adaptive or parallel", parseStrategyOption)
+    .option("--score-cutoff <score>", "Early stop score cutoff for adaptive strategy", parseInteger)
+    .option("--retry-budget <count>", "Codex retries per candidate (0-2)", parseInteger)
+    .option("--fanout-delay-ms <ms>", "Delay before adaptive fanout launch (ms)", parseInteger)
     .option("--fast", "Fast mode: defaults to 1 agent and lower generation timeout")
     .option("--debug", "Debug mode: keep worktrees and print extra diagnostics")
+    .option("--narrate", "Enable secondary LLM narration of progress (enabled by default)")
+    .option("--no-narrate", "Disable secondary LLM narration of progress")
     .showHelpAfterError();
 
   program
     .command("chat")
     .description("Open interactive studio mode with onboarding and guided tool building.")
     .option("-j, --agents <count>", "Parallel candidate agents/worktrees (1-5)", parseInteger)
+    .option("--strategy <mode>", "Candidate strategy: adaptive or parallel", parseStrategyOption)
+    .option("--score-cutoff <score>", "Early stop score cutoff for adaptive strategy", parseInteger)
+    .option("--retry-budget <count>", "Codex retries per candidate (0-2)", parseInteger)
+    .option("--fanout-delay-ms <ms>", "Delay before adaptive fanout launch (ms)", parseInteger)
     .option("--fast", "Fast mode: defaults to 1 agent and lower generation timeout")
     .option("--debug", "Debug mode: keep worktrees and keep worktree artifacts")
+    .option("--narrate", "Enable secondary LLM narration of progress (enabled by default)")
+    .option("--no-narrate", "Disable secondary LLM narration of progress")
     .action(async (options: RuntimeOptions) => {
       const globalOptions = program.opts<RuntimeOptions>();
       const mergedOptions = mergeRuntimeOptions(globalOptions, options);
@@ -186,6 +202,35 @@ export function buildProgram(): Command {
       console.log(`Stored feedback for '${name}'.`);
     });
 
+  tool
+    .command("clean")
+    .argument("<name>", "Tool name")
+    .option("-y, --yes", "Skip confirmation prompt")
+    .description("Delete one generated tool (all versions/history) from registry and disk.")
+    .action(async (name: string, options: ToolCleanOptions) => {
+      if (!options.yes) {
+        const proceed = await confirmYesNo(
+          `Delete tool '${name}' and all of its versions/history?`,
+          true
+        );
+        if (!proceed) {
+          console.log("Cancelled.");
+          return;
+        }
+      }
+
+      const deleted = registry.deleteToolByName(name);
+      const toolDir = path.join(paths.toolsDir, name);
+      rmSync(toolDir, { recursive: true, force: true });
+
+      if (!deleted.deleted) {
+        console.log(`Tool '${name}' was not in registry. Removed local directory if present.`);
+        return;
+      }
+
+      console.log(`Deleted tool '${name}' from registry and local projects.`);
+    });
+
   program
     .argument("[intent...]", "Natural command to generate or run")
     .action(async (intentParts: string[]) => {
@@ -217,75 +262,127 @@ export function buildProgram(): Command {
         {
           candidateCount: config.candidateCount,
           codexTimeoutMs: config.codexTimeoutMs,
-          keepWorktrees: config.keepWorktrees
+          keepWorktrees: config.keepWorktrees,
+          strategy: config.strategy,
+          scoreCutoff: config.scoreCutoff,
+          retryBudget: config.retryBudget,
+          fanoutDelayMs: config.fanoutDelayMs
         },
         runtimeOptions
       );
       console.log(
-        `[config] agents=${runtimeConfig.candidateCount} timeoutMs=${runtimeConfig.codexTimeoutMs} keepWorktrees=${runtimeConfig.keepWorktrees} fast=${runtimeConfig.fast} debug=${runtimeConfig.debug}`
+        `[config] strategy=${runtimeConfig.strategy} agents=${runtimeConfig.candidateCount} cutoff=${runtimeConfig.scoreCutoff} retries=${runtimeConfig.retryBudget} fanoutDelayMs=${runtimeConfig.fanoutDelayMs} timeoutMs=${runtimeConfig.codexTimeoutMs} keepWorktrees=${runtimeConfig.keepWorktrees} fast=${runtimeConfig.fast} debug=${runtimeConfig.debug} narrate=${runtimeOptions.narrate !== false}`
       );
 
-      const generation = await generateToolFromIntent({
-        request: {
-          intent: draft.normalizedIntent,
-          clarification: clarificationResponse
-        },
-        settings: {
-          codexBinary: config.codexBinary,
-          codexModel: config.codexModel,
-          candidateCount: runtimeConfig.candidateCount,
-          codexTimeoutMs: runtimeConfig.codexTimeoutMs,
-          keepWorktrees: runtimeConfig.keepWorktrees
-        },
-        context: {
-          paths,
-          repoRoot
-        },
-        registry,
-        reporter: (event) => printProgress(event)
-      }).catch((error: unknown) => {
-        if (error instanceof GenerationFailureError) {
-          console.error(`\n[error] Generation failed for job ${error.jobId}`);
-          for (const candidate of error.candidates) {
-            console.error(
-              `  - ${candidate.candidateId}: score=${candidate.score} (${candidate.summary})`
-            );
-            console.error(`    codex summary: ${candidate.logs.codexLastMessagePath}`);
-            console.error(`    codex stderr: ${candidate.logs.codexStderrPath}`);
-            console.error(`    compile stderr: ${candidate.logs.compileStderrPath}`);
-            console.error(`    smoke stderr: ${candidate.logs.smokeStderrPath}`);
+      const narrator = new ProgressNarrator({
+        enabled: runtimeOptions.narrate !== false,
+        intent: draft.normalizedIntent,
+        apiKey: config.openAIApiKey,
+        model: config.narratorModel,
+        flushIntervalMs: config.narratorFlushMs
+      });
+      narrator.start();
+
+      try {
+        const generation = await generateToolFromIntent({
+          request: {
+            intent: draft.normalizedIntent,
+            clarification: clarificationResponse
+          },
+          settings: {
+            codexBinary: config.codexBinary,
+            codexModel: config.codexModel,
+            candidateCount: runtimeConfig.candidateCount,
+            codexTimeoutMs: runtimeConfig.codexTimeoutMs,
+            keepWorktrees: runtimeConfig.keepWorktrees,
+            strategy: runtimeConfig.strategy,
+            scoreCutoff: runtimeConfig.scoreCutoff,
+            retryBudget: runtimeConfig.retryBudget,
+            fanoutDelayMs: runtimeConfig.fanoutDelayMs
+          },
+          context: {
+            paths,
+            repoRoot
+          },
+          registry,
+          reporter: (event) => {
+            printProgress(event);
+            narrator.push(event);
           }
-          console.error(`[hint] Job logs: ${error.jobDir}`);
-          console.error(`[hint] Inspect: ${path.join(error.jobDir, "candidate-*/logs/*.log")}`);
-          process.exitCode = 1;
-          return null;
+        }).catch((error: unknown) => {
+          if (error instanceof GenerationFailureError) {
+            console.error(`\n[error] Generation failed for job ${error.jobId}`);
+            for (const candidate of error.candidates) {
+              console.error(
+                `  - ${candidate.candidateId}: score=${candidate.score} (${candidate.summary})`
+              );
+              console.error(`    codex summary: ${candidate.logs.codexLastMessagePath}`);
+              console.error(`    codex stderr: ${candidate.logs.codexStderrPath}`);
+              console.error(`    compile stderr: ${candidate.logs.compileStderrPath}`);
+              console.error(`    smoke stderr: ${candidate.logs.smokeStderrPath}`);
+            }
+            console.error(`[hint] Job logs: ${error.jobDir}`);
+            console.error(`[hint] Inspect: ${path.join(error.jobDir, "candidate-*/logs/*.log")}`);
+            process.exitCode = 1;
+            return null;
+          }
+
+          throw error;
+        });
+
+        if (!generation) {
+          return;
         }
 
-        throw error;
-      });
+        console.log(`Generated tool '${generation.toolName}' v${generation.version}.`);
+        console.log(
+          `Selected ${generation.selectedCandidate.candidateId} score=${generation.selectedCandidate.score} (${generation.selectedCandidate.summary}).`
+        );
+        console.log(`[info] Generation job artifacts: ${generation.jobDir}`);
+        if (runtimeConfig.debug) {
+          console.log(`[debug] Worktrees are kept under: ${paths.worktreesDir}`);
+        }
 
-      if (!generation) {
-        return;
+        const requiredManifestArgs = getRequiredManifestArgs(generation.selectedCandidate.manifest);
+        if (requiredManifestArgs.length > 0) {
+          console.log(
+            `[hint] Skipping auto-run: '${generation.toolName}' requires input args (${requiredManifestArgs.join(", ")}).`
+          );
+          console.log(
+            `[hint] Try: ${formatRunTemplate(
+              `icli tool run ${generation.toolName} --`,
+              requiredManifestArgs
+            )}`
+          );
+          const example = getPreferredManifestExample(generation.selectedCandidate.manifest);
+          if (example) {
+            console.log(`[hint] Manifest example: ${example}`);
+          }
+          process.exitCode = 0;
+          return;
+        }
+
+        const runResult = await runAndRecordByVersion({
+          toolVersionId: generation.toolVersionId,
+          codePath: generation.codePath,
+          args: [],
+          paths,
+          registry,
+          streamOutput: false
+        });
+
+        if (isLikelyMissingRequiredArgs(runResult)) {
+          console.log(
+            `[hint] Tool '${generation.toolName}' needs required args. Try: icli tool run ${generation.toolName} -- --help`
+          );
+          process.exitCode = 0;
+          return;
+        }
+
+        process.exitCode = runResult.exitCode;
+      } finally {
+        await narrator.close();
       }
-
-      console.log(`Generated tool '${generation.toolName}' v${generation.version}.`);
-      console.log(
-        `Selected ${generation.selectedCandidate.candidateId} score=${generation.selectedCandidate.score} (${generation.selectedCandidate.summary}).`
-      );
-      console.log(`[info] Generation job artifacts: ${generation.jobDir}`);
-      if (runtimeConfig.debug) {
-        console.log(`[debug] Worktrees are kept under: ${paths.worktreesDir}`);
-      }
-
-      const runResult = await runAndRecordByVersion({
-        toolVersionId: generation.toolVersionId,
-        codePath: generation.codePath,
-        args: [],
-        paths,
-        registry
-      });
-
-      process.exitCode = runResult.exitCode;
     });
 
   const closeRegistry = (): void => {
@@ -316,7 +413,12 @@ function mergeRuntimeOptions(base: RuntimeOptions, override: RuntimeOptions): Ru
   return {
     agents: override.agents ?? base.agents,
     fast: override.fast ?? base.fast,
-    debug: override.debug ?? base.debug
+    debug: override.debug ?? base.debug,
+    narrate: override.narrate ?? base.narrate,
+    strategy: override.strategy ?? base.strategy,
+    scoreCutoff: override.scoreCutoff ?? base.scoreCutoff,
+    retryBudget: override.retryBudget ?? base.retryBudget,
+    fanoutDelayMs: override.fanoutDelayMs ?? base.fanoutDelayMs
   };
 }
 
@@ -346,4 +448,16 @@ function normalizeCleanupOptions(options: CleanOptions): {
     artifacts,
     all
   };
+}
+
+function isLikelyMissingRequiredArgs(runResult: { exitCode: number; stderr: string }): boolean {
+  if (runResult.exitCode === 0) {
+    return false;
+  }
+
+  const lowered = runResult.stderr.toLowerCase();
+  return (
+    lowered.includes("the following arguments are required") ||
+    (lowered.includes("usage:") && lowered.includes("error:"))
+  );
 }
