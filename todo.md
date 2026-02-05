@@ -3,6 +3,7 @@
 ## Snapshot
 - Stack: Node.js + TypeScript.
 - Generated tool runtime: Python.
+- Default generation model: `gpt-5.3-codex` (with fallback to `gpt-5-codex`).
 - UX policy: allow exactly 1 clarification question before execution.
 - Runtime state: `.infinite/` local workspace.
 

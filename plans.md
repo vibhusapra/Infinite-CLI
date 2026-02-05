@@ -70,6 +70,7 @@ Ship a terminal-first system where `infinite "<intent>"` can generate and run di
 - Keep generated tools Python-first for path-of-least-resistance.
 - Preserve `OPENAI_API_KEY` passthrough to generated tools.
 - Keep model/runtime config centralized and env-driven.
+- Default generation model is `gpt-5.3-codex` with `gpt-5-codex` fallback handling.
 - Add `--json` support incrementally, starting with read-only commands.
 
 ## Near-Term Sprint Checklist

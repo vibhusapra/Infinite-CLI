@@ -35,10 +35,14 @@ cp .env.example .env
 Key settings:
 - `OPENAI_API_KEY`
 - `INFINITE_CODEX_BIN` (default: `codex`)
-- `INFINITE_CODEX_MODEL` (default: `gpt-5-codex`)
+- `INFINITE_CODEX_MODEL` (default: `gpt-5.3-codex`)
 - `INFINITE_CANDIDATE_COUNT` (default: `2`)
 - `INFINITE_CODEX_TIMEOUT_MS` (default: `240000`)
 - `INFINITE_KEEP_WORKTREES` (default: `false`)
+
+Model behavior:
+- Orchestrator tries `INFINITE_CODEX_MODEL` first.
+- If Codex returns `model_not_found`, it retries automatically with `gpt-5-codex`.
 
 ## Notes
 - Network access and OpenAI API usage are expected.

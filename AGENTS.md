@@ -13,6 +13,7 @@ Build and iterate Infinite CLI as a terminal-first system that generates disposa
 ## Stack and Runtime
 - Core implementation: Node.js + TypeScript.
 - Generated tools: Python first.
+- Default Codex generation model: `gpt-5.3-codex` (fallback to `gpt-5-codex` on model-not-found).
 - Local state root: `.infinite/`.
 - Registry database: `.infinite/registry.db`.
 

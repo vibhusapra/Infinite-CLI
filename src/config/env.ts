@@ -18,7 +18,7 @@ export function loadInfiniteConfig(env: NodeJS.ProcessEnv = process.env): Infini
   return {
     openAIApiKey: env.OPENAI_API_KEY?.trim() || null,
     codexBinary: env.INFINITE_CODEX_BIN?.trim() || "codex",
-    codexModel: env.INFINITE_CODEX_MODEL?.trim() || "gpt-5-codex",
+    codexModel: env.INFINITE_CODEX_MODEL?.trim() || "gpt-5.3-codex",
     candidateCount: parseBoundedInt(env.INFINITE_CANDIDATE_COUNT, 2, MIN_CANDIDATE_COUNT, MAX_CANDIDATE_COUNT),
     codexTimeoutMs: parseBoundedInt(env.INFINITE_CODEX_TIMEOUT_MS, 240_000, 30_000, 900_000),
     keepWorktrees: parseBoolean(env.INFINITE_KEEP_WORKTREES, false)
